@@ -1,0 +1,68 @@
+{
+  "name": "expensive-audit",
+  "description": "One agent per route handler, three diverse lenses per finding",
+  "budget": {
+    "tokens": 2000000,
+    "usd": 12
+  },
+  "nodes": [
+    {
+      "id": "scope",
+      "tier": "deep",
+      "phase": "Scope",
+      "outputSchema": "ROUTES"
+    },
+    {
+      "id": "inspect",
+      "tier": "deep",
+      "phase": "Scan",
+      "outputSchema": "FINDING",
+      "fanout": {
+        "over": "routes",
+        "width": 40,
+        "maxConcurrent": 8
+      }
+    },
+    {
+      "id": "verify",
+      "tier": "deep",
+      "phase": "Verify",
+      "outputSchema": "VERDICT",
+      "harness": {
+        "kind": "diverse-lens",
+        "lenses": [
+          "authz",
+          "input",
+          "session"
+        ],
+        "passIf": "majority"
+      }
+    },
+    {
+      "id": "report",
+      "tier": "deep",
+      "phase": "Report"
+    }
+  ],
+  "edges": [
+    {
+      "from": "scope",
+      "to": "inspect",
+      "channel": "routes",
+      "barrier": false
+    },
+    {
+      "from": "inspect",
+      "to": "verify",
+      "channel": "findings",
+      "barrier": false
+    },
+    {
+      "from": "verify",
+      "to": "report",
+      "channel": "confirmed",
+      "barrier": true,
+      "barrierReason": "the report ranks findings against each other, so it needs the whole set"
+    }
+  ]
+}

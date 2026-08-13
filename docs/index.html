@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>preflight — price an agent workflow before it runs</title>
+<meta name="description" content="Dependabot, but for agent spend. Comments the predicted agent count and dollar cost on the pull request that changed the workflow spec.">
+<meta property="og:title" content="preflight — price an agent workflow before it runs">
+<meta property="og:description" content="Dependabot, but for agent spend. Comments the predicted agent count and dollar cost on the pull request that changed the workflow spec.">
+<meta property="og:type" content="website">
+<link rel="icon" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/tokens.css">
+<link rel="stylesheet" href="assets/brand.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+</head>
+<body>
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="https://unchained-labs.github.io/" aria-label="Unchained Labs">
+      <img src="assets/lockup-horizontal.svg" alt="Unchained Labs" style="height:22px">
+    </a>
+    <nav>
+      <a href="#model">The model</a>
+      <a href="#action">Action</a>
+      <a href="#trust">Trust</a>
+      <a href="https://github.com/Unchained-Labs/preflight">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<section class="hero">
+  <div class="wrap">
+    <p class="label">preflight</p>
+    <h1>Adding a third verifier lens is a one-line diff and a 50% cost increase.</h1>
+    <p class="lead">Runtime guards stop a run that is already spending. Nothing tells you what a workflow will cost before you merge the change that made it expensive — which is when it is cheap to fix.</p>
+    <ul class="badges">
+      <li class="badge warn">alpha</li>
+      <li class="badge up">47 tests passing</li>
+      <li class="badge ">GitHub Action</li>
+      <li class="badge ">MIT</li>
+    </ul>
+    <div class="btn-row">
+      <a class="btn primary" href="https://github.com/Unchained-Labs/preflight#action">Add the Action</a>
+      <a class="btn " href="https://github.com/Unchained-Labs/preflight">GitHub</a>
+    </div>
+  </div>
+</section>
+
+<section id="demo">
+  <div class="wrap">
+    <p class="label">The estimate</p>
+    <h2>Where the money actually goes</h2>
+    <pre class="term"><code><span class="p">$</span> <span class="c">preflight estimate audit.graph.json</span>
+
+  route-auth-audit  <span class="dim">estimated before running</span>
+
+  <span class="dim">agents</span>       114  <span class="dim">(66–222)</span>
+  <span class="dim">cost</span>       $0.974  <span class="dim">($0.687–$1.62)</span>
+  <span class="dim">tokens</span>      588k in  70k out
+  <span class="dim">budget</span>     $12.00  <span class="ok">✓ under</span>
+
+  <span class="dim">where it goes</span>
+
+  verify     <span class="wa">█████████████</span><span class="dim">░░░░░░░░░░░░░░░</span>   $0.435  <span class="dim">45%</span>
+  fan-out    <span class="ac">█████████</span><span class="dim">░░░░░░░░░░░░░░░░░░░</span>   $0.299  <span class="dim">31%</span>
+  synthesis  <span class="ac">██████</span><span class="dim">░░░░░░░░░░░░░░░░░░░░░░</span>   $0.210  <span class="dim">22%</span>
+  scope      <span class="ac">█</span><span class="dim">░░░░░░░░░░░░░░░░░░░░░░░░░░░</span>   $0.029  <span class="dim">3%</span>
+
+  <span class="wa">!</span> verification is 45% of this run. <span class="dim">findings × lenses, not fan-out width, is usually the growth term.</span>
+
+  <span class="dim">biggest levers</span>
+
+     $0.435  verify (verifier)
+             <span class="dim">drop a lens, or replace one with an executable oracle</span>
+     $0.299  inspect (worker)
+             <span class="dim">narrow the fan-out, or add a zero-token prefilter</span></code></pre>
+    <p class="narrow">The shape is the useful part. Most people size their graph by fan-out width and are surprised that verification — findings × lenses — is the term that actually grows.</p>
+  </div>
+</section>
+
+<section id="model">
+  <div class="wrap">
+    <p class="label">The model</p>
+    <h2>Four terms, one that bites</h2>
+    <pre><code>cost ≈ Σ_nodes    (fanout × tier_rate)
+     + Σ_findings  (findings × lenses × verify_rate)   ← the term that bites
+     + retries     × schema_mismatch_rate
+     + rounds      (if the graph has a cycle)</code></pre>
+    <div class="grid two">
+      <div class="card">
+        <h3>Every assumption is printed</h3>
+        <p>The output states the token profile per node kind, the findings-per-unit ratio, the retry rate and the cache multipliers. A number with hidden assumptions is a number nobody can argue with — which means nobody can trust it either.</p>
+      </div>
+      <div class="card">
+        <h3>It reports a range</h3>
+        <p>Fan-out width and finding counts are unknown until the run. Emitting <code>$12.40</code> implies a precision the input does not contain, so you get low/expected/high and every assumed count is marked <code>~</code>.</p>
+      </div>
+      <div class="card">
+        <h3>Prompt caching is modelled</h3>
+        <p>A fan-out shares a prefix: the first call writes the cache at 1.25×, the rest read at 0.1×. Ignoring that overstates a wide fan-out substantially.</p>
+      </div>
+      <div class="card">
+        <h3>Prices are a cache, and say so</h3>
+        <p>The table carries its verification date, the CLI prints it, and CI fails when it is over 120 days old. Sonnet 5&#x27;s intro rate expires 2026-08-31 — <code>--as-of</code> prices past that at the standard rate rather than the promotional one.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="action">
+  <div class="wrap">
+    <p class="label">Action</p>
+    <h2>One comment, updated in place</h2>
+    <pre><code>name: preflight
+on: pull_request
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  cost:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: Unchained-Labs/preflight@v0
+        with:
+          paths: |
+            .claude/workflows/**
+            **/*.graph.json
+          max-usd: &quot;25&quot;</code></pre>
+    <p class="narrow">It posts one comment and updates it in place on later pushes rather than adding a new one each time, and outputs <code>usd</code> and <code>agents</code> for downstream steps.</p>
+    <p class="narrow">The action is <strong>dependency-free</strong> — no <code>@actions/core</code>, no <code>@actions/github</code>. A cost bot that needs a 40MB install to post one comment is a cost bot nobody adopts.</p>
+  </div>
+</section>
+
+<section id="trust">
+  <div class="wrap">
+    <p class="label">Trust</p>
+    <h2>Two input shapes, honestly different accuracy</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>Input</th>
+          <th>Accuracy</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Declarative spec</strong> (<code>*.graph.json</code>)</td>
+            <td>Tight. Width, tier and lens count are data, so the estimate is arithmetic on numbers you wrote down.</td>
+          </tr>
+          <tr>
+            <td><strong>Script</strong> (<code>agent()</code>, <code>parallel()</code>)</td>
+            <td>Wide. Those numbers are runtime values. We recover what is statically visible and mark the rest assumed.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="narrow">This is a property of the input, not something to engineer away. If you want a tight number, write the spec.</p>
+    <div class="note warn">
+      <p><strong>It is an estimate, not a quote.</strong> It cannot know how many findings your scan will produce or how wide a runtime fan-out gets.</p>
+      <p><strong>Defaults are generic.</strong> Uncalibrated, treat the <em>shape</em> — which stage dominates — as far more reliable than the absolute figure. Run one real workflow, read the token counts out of your spans, and put them in <code>preflight.json</code>.</p>
+      <p><strong>It does not track actual spend.</strong> It prices the spec, not the run.</p>
+    </div>
+  </div>
+</section>
+
+<section id="family">
+  <div class="wrap">
+    <p class="label">The family</p>
+    <h2>One layer of a set</h2>
+    <div class="grid three">
+      <a class="card" href="https://github.com/Unchained-Labs/graphlint">
+        <h3>graphlint</h3>
+        <p>Lints the spec — barrier misuse, correlated verifiers, non-terminating cycles.</p>
+      </a>
+      <a class="card" href="https://github.com/Unchained-Labs/decorrelate">
+        <h3>decorrelate</h3>
+        <p>Measures whether your verifiers were actually independent, from recorded verdicts.</p>
+      </a>
+      <a class="card" href="https://github.com/Unchained-Labs/workflow-hub">
+        <h3>workflow-hub</h3>
+        <p>Graph specs that lint clean and price predictably out of the box.</p>
+      </a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <span>preflight · Unchained Labs</span>
+    <nav>
+      <a href="https://unchained-labs.github.io/">Org</a>
+      <a href="https://github.com/Unchained-Labs/preflight">Source</a>
+      <a href="https://unchained-labs.github.io/branding/">Brand</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>

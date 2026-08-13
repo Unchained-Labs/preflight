@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build
+      - run: pnpm test
+
+  model-sanity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      # A cost tool quoting stale prices is worse than one that admits it does
+      # not know. Fail the build rather than let the table rot silently.
+      - name: the pricing table is not stale
+        run: |
+          node -e "
+            const { pricingAgeDays, PRICING_VERIFIED } = require('./dist/pricing.js');
+          " 2>/dev/null || true
+          node --input-type=module -e "
+            import { pricingAgeDays, PRICING_VERIFIED } from './dist/pricing.js';
+            const today = new Date().toISOString().slice(0, 10);
+            const age = pricingAgeDays(today);
+            console.log('pricing verified', PRICING_VERIFIED, '->', age, 'days old');
+            if (age > 120) {
+              console.log('::error::pricing table is ' + age + ' days old. Re-verify against the Anthropic pricing page and update PRICING_VERIFIED.');
+              process.exit(1);
+            }
+            if (age > 60) console.log('::warning::pricing table is ' + age + ' days old — re-verify soon.');
+          "
+
+      # The shape of the estimate is the claim worth regression-testing: an
+      # all-deep graph must cost more than a tiered one, and verification must
+      # dominate a graph with three lenses.
+      - name: tiering changes the number in the right direction
+        run: |
+          node dist/cli.js estimate test/fixtures/audit.graph.json --format json > a.json
+          node dist/cli.js estimate test/fixtures/expensive.graph.json --format json > b.json
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            const a = JSON.parse(readFileSync('a.json','utf8')).after;
+            const b = JSON.parse(readFileSync('b.json','utf8')).after;
+            if (b.usd.expected <= a.usd.expected)
+              throw new Error('all-deep should cost more: ' + b.usd.expected + ' vs ' + a.usd.expected);
+            const top = Object.entries(a.byKind).sort((x,y) => y[1]-x[1])[0][0];
+            if (top !== 'verifier') throw new Error('expected verification to dominate, got ' + top);
+            console.log('ok  tiered \$' + a.usd.expected.toFixed(2) + ' < all-deep \$' + b.usd.expected.toFixed(2));
+          "
+
+      - name: --max-usd fails when the cap is blown
+        run: |
+          if node dist/cli.js estimate test/fixtures/expensive.graph.json --max-usd 0.01 > /dev/null; then
+            echo "::error::--max-usd did not fail"
+            exit 1
+          fi
+
+      - name: the PR comment carries its update marker
+        run: |
+          node dist/cli.js estimate test/fixtures/audit.graph.json --format markdown | grep -q 'preflight-cost' \
+            || { echo "::error::comment marker missing — the action would duplicate comments"; exit 1; }

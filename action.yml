@@ -1,0 +1,53 @@
+name: "preflight cost"
+description: "Comments the predicted agent count and dollar cost on any PR that changes an agent workflow spec."
+author: "Unchained Labs"
+branding:
+  icon: "dollar-sign"
+  color: "green"
+
+inputs:
+  paths:
+    description: "Newline- or comma-separated globs of workflow specs to price."
+    required: false
+    default: ".claude/workflows/**,**/*.graph.json,**/*.spec.json"
+  max-usd:
+    description: "Fail the check if the expected cost exceeds this. Empty = never fail."
+    required: false
+    default: ""
+  config:
+    description: "Path to assumption overrides."
+    required: false
+    default: "preflight.json"
+  comment:
+    description: "Post (and update) a PR comment. Set false to only annotate the run."
+    required: false
+    default: "true"
+  github-token:
+    description: "Token used to post the comment."
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  usd:
+    description: "Expected cost in USD across every priced spec."
+    value: ${{ steps.run.outputs.usd }}
+  agents:
+    description: "Expected agent count across every priced spec."
+    value: ${{ steps.run.outputs.agents }}
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-node@v4
+      with: { node-version: "22" }
+
+    - id: run
+      shell: bash
+      env:
+        PREFLIGHT_PATHS: ${{ inputs.paths }}
+        PREFLIGHT_MAX_USD: ${{ inputs.max-usd }}
+        PREFLIGHT_CONFIG: ${{ inputs.config }}
+        PREFLIGHT_COMMENT: ${{ inputs.comment }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PREFLIGHT_BASE: ${{ github.event.pull_request.base.sha }}
+      run: node ${{ github.action_path }}/dist/action.js

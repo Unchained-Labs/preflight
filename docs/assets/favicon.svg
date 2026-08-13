@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Unchained Labs">
+  <rect width="32" height="32" rx="7" fill="#0F1419"/>
+  <g stroke="#00D4AA" stroke-width="2.1" stroke-linecap="round" fill="none">
+    <line x1="10.01" y1="14.41" x2="22.70" y2="7.71"/>
+    <line x1="10.40" y1="16.00" x2="22.40" y2="16.00"/>
+    <line x1="10.01" y1="17.59" x2="22.70" y2="24.29"/>
+  </g>
+  <g fill="#00D4AA">
+    <circle cx="7.00" cy="16.00" r="3.4"/>
+    <circle cx="25.00" cy="6.50" r="2.6"/>
+    <circle cx="25.00" cy="16.00" r="2.6"/>
+    <circle cx="25.00" cy="25.50" r="2.6"/>
+  </g>
+</svg>
