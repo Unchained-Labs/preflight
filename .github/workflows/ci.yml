@@ -37,9 +37,6 @@ jobs:
       # not know. Fail the build rather than let the table rot silently.
       - name: the pricing table is not stale
         run: |
-          node -e "
-            const { pricingAgeDays, PRICING_VERIFIED } = require('./dist/pricing.js');
-          " 2>/dev/null || true
           node --input-type=module -e "
             import { pricingAgeDays, PRICING_VERIFIED } from './dist/pricing.js';
             const today = new Date().toISOString().slice(0, 10);
