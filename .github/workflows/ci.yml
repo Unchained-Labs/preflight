@@ -63,11 +63,19 @@ jobs:
           git -C "$T" init -q .
           git -C "$T" -c user.email=ci@example.com -c user.name=ci add -A
           git -C "$T" -c user.email=ci@example.com -c user.name=ci commit -q -m fixture
-          out=$(cd "$T" && PREFLIGHT_PATHS='test/fixtures/*.graph.json' PREFLIGHT_COMMENT=false node action.bundle.js)
-          echo "$out" | grep -q '^usd=0\.97' || {
-            echo "::error::standalone entrypoint did not price the fixture"; echo "$out"; exit 1;
+          # Assert on GITHUB_OUTPUT, not stdout: the action appends its outputs to
+          # that file whenever it is set, and it is always set on a runner. Grepping
+          # stdout passes locally and fails here, which is how this step first went
+          # red on a run that had worked perfectly.
+          ( cd "$T" && GITHUB_OUTPUT="$T/out.txt" PREFLIGHT_PATHS='test/fixtures/*.graph.json' \
+              PREFLIGHT_COMMENT=false node action.bundle.js > /dev/null )
+          grep -q '^usd=0\.97$' "$T/out.txt" || {
+            echo "::error::standalone entrypoint did not price the fixture"; cat "$T/out.txt"; exit 1;
           }
-          echo "ok  action entrypoint runs standalone: $(echo "$out" | head -2 | tr '\n' ' ')"
+          grep -q '^agents=114$' "$T/out.txt" || {
+            echo "::error::standalone entrypoint reported the wrong agent count"; cat "$T/out.txt"; exit 1;
+          }
+          echo "ok  action entrypoint runs standalone: $(tr '\n' ' ' < "$T/out.txt")"
 
       # Calibration is the one place preflight writes a number that looks
       # measured. These assert that it stays honest about what it did and did not
