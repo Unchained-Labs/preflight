@@ -6,6 +6,11 @@
   <p><a href="https://unchained-labs.github.io/preflight/">Docs</a> · <a href="#the-model">The model</a> · <a href="#action">Action</a></p>
 </div>
 
+<div align="center">
+  <img src="docs/assets/demo.gif" width="760" alt="preflight terminal demo">
+  <br><sub>Agents, dollars, and which stage dominates — before the run. <a href="https://unchained-labs.github.io/preflight/">Full docs →</a></sub>
+</div>
+
 ---
 
 **Status: alpha.** The model is honest about its assumptions but the assumptions

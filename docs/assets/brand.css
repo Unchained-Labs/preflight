@@ -315,3 +315,43 @@ figure { margin: 0 0 var(--ul-space-6); }
 figcaption { color: var(--ul-faint); font-size: var(--ul-text-xs); margin-top: var(--ul-space-2); }
 
 hr { border: 0; border-top: 1px solid var(--ul-line); margin: var(--ul-space-8) 0; }
+
+/* ---- terminal demo player ---------------------------------------------- */
+
+/* A muted autoplaying loop reads as a moving screenshot. No controls, no audio,
+ * and `playsinline` so iOS does not hijack it into fullscreen. */
+.demo {
+  margin: 0 0 var(--ul-space-6);
+  border-radius: var(--ul-radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--ul-line);
+  background: var(--ul-bg-inset);
+  line-height: 0;                    /* kill the inline-video baseline gap */
+}
+.demo video {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.demo figcaption {
+  line-height: 1.5;
+  padding: var(--ul-space-3) var(--ul-space-4);
+  border-top: 1px solid var(--ul-line);
+  background: var(--ul-bg-raised);
+  color: var(--ul-faint);
+  font-size: var(--ul-text-xs);
+}
+
+/* In the hero the demo is the primary object, so give it more room and a
+ * slightly stronger edge than an inline one. */
+.hero-demo {
+  margin-top: var(--ul-space-8);
+  border-color: var(--ul-line-strong);
+  max-width: 900px;
+}
+
+/* Respect a reduced-motion preference: pause the loop and show the first frame.
+ * An autoplaying loop is exactly what that setting exists to stop. */
+@media (prefers-reduced-motion: reduce) {
+  .demo video { animation-play-state: paused; }
+}
