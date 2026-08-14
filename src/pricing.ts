@@ -110,3 +110,25 @@ export function pricingAgeDays(today: string): number {
   const now = Date.parse(`${today}T00:00:00Z`);
   return Math.floor((now - then) / 86_400_000);
 }
+
+/**
+ * Render the table as an `OTTER_MODEL_PRICING` value.
+ *
+ * Otter (the orchestration engine in the Kymatics stack) reads its price list
+ * from that environment variable as a comma-separated `model=input:output`,
+ * both USD per million tokens — the same numbers this module keeps, in a
+ * different shape. Emitting it from here gives the two systems one source of
+ * truth, and it is the CI-checked one: `PRICING_VERIFIED` fails the build when
+ * the table goes stale, whereas a hand-set env var rots silently.
+ *
+ * `asOf` matters: an intro rate that has expired must not be exported as if it
+ * were current, or Otter's post-hoc cost reporting would under-report.
+ */
+export function toOtterEnv(asOf?: string): string {
+  return Object.keys(PRICING)
+    .map((id) => {
+      const p = priceOf(id, asOf);
+      return `${id}=${p.input}:${p.output}`;
+    })
+    .join(",");
+}

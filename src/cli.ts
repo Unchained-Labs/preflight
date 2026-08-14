@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 
 import { diffEstimates, estimate } from "./estimate.js";
 import type { Assumptions, Estimate } from "./estimate.js";
-import { knownModels, PRICING, PRICING_VERIFIED } from "./pricing.js";
+import { knownModels, PRICING, PRICING_VERIFIED, toOtterEnv } from "./pricing.js";
 import { markdown, terminal } from "./report.js";
 import { read } from "./spec.js";
 
@@ -16,7 +16,7 @@ const HELP = `preflight ${VERSION} — price an agent workflow before it runs
 USAGE
   preflight estimate <spec>              agents, cost and the biggest levers
   preflight diff <spec> --base <ref>     before/after against a git ref
-  preflight models                       the pricing table and when it was verified
+  preflight models                       the pricing table and when it was verified\n  preflight models --format otter-env    emit OTTER_MODEL_PRICING for the Kymatics stack
 
 OPTIONS
   --format text|json|markdown   output format (default: text)
@@ -89,6 +89,12 @@ function main(): number {
   if (asOf) overrides.asOf = asOf;
 
   if (cmd === "models") {
+    // Machine-readable export for Otter's OTTER_MODEL_PRICING, so the two
+    // systems share one price list rather than drifting apart.
+    if (format === "otter-env") {
+      console.log(toOtterEnv(asOf));
+      return 0;
+    }
     console.log(`\n  pricing verified ${PRICING_VERIFIED}  (USD per million tokens)\n`);
     const w = Math.max(...knownModels().map((m) => m.length));
     console.log(`  ${"model".padEnd(w)}   input   output  tier      context`);

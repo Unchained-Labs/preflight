@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { classify, DEFAULT_ASSUMPTIONS, diffEstimates, estimate } from "../src/estimate.js";
-import { PRICING, PRICING_VERIFIED, priceOf, pricingAgeDays, resolveModel } from "../src/pricing.js";
+import { PRICING, PRICING_VERIFIED, priceOf, pricingAgeDays, resolveModel, toOtterEnv } from "../src/pricing.js";
 import { markdown } from "../src/report.js";
 import { read, readScript, readSpec } from "../src/spec.js";
 
@@ -61,6 +61,57 @@ describe("pricing", () => {
     expect(PRICING_VERIFIED).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(pricingAgeDays("2026-06-24")).toBe(0);
     expect(pricingAgeDays("2026-07-24")).toBe(30);
+  });
+});
+
+describe("OTTER_MODEL_PRICING export", () => {
+  // Otter parses `model=input:output` comma-separated, both USD per million
+  // tokens, and skips malformed entries silently — so a shape error here would
+  // not fail loudly, it would quietly cost Otter its cost reporting.
+  const parse = (raw: string) => {
+    const out: Record<string, { input: number; output: number }> = {};
+    for (const entry of raw.split(",")) {
+      const [model, prices] = entry.split("=");
+      const [input, output] = (prices ?? "").split(":");
+      if (!model || input === undefined || output === undefined) continue;
+      const i = Number(input);
+      const o = Number(output);
+      if (!Number.isFinite(i) || !Number.isFinite(o) || i < 0 || o < 0) continue;
+      out[model] = { input: i, output: o };
+    }
+    return out;
+  };
+
+  it("emits an entry Otter can parse for every known model", () => {
+    const parsed = parse(toOtterEnv("2026-08-14"));
+    expect(Object.keys(parsed).sort()).toEqual(Object.keys(PRICING).sort());
+  });
+
+  it("round-trips every price faithfully", () => {
+    const asOf = "2026-08-14";
+    const parsed = parse(toOtterEnv(asOf));
+    for (const id of Object.keys(PRICING)) {
+      const want = priceOf(id, asOf);
+      expect(parsed[id], id).toEqual({ input: want.input, output: want.output });
+    }
+  });
+
+  it("exports the standard rate once an intro window has expired", () => {
+    // Exporting an expired promotional rate would make Otter under-report cost.
+    expect(parse(toOtterEnv("2026-08-14"))["claude-sonnet-5"]).toEqual({ input: 2, output: 10 });
+    expect(parse(toOtterEnv("2026-09-01"))["claude-sonnet-5"]).toEqual({ input: 3, output: 15 });
+  });
+
+  it("survives Otter's malformed-entry rules — no empty fields, no negatives", () => {
+    const raw = toOtterEnv("2026-08-14");
+    expect(raw).not.toMatch(/,,/);
+    expect(raw).not.toMatch(/=:/);
+    expect(raw).not.toMatch(/:-/);
+    expect(raw.startsWith(",")).toBe(false);
+    expect(raw.endsWith(",")).toBe(false);
+    for (const entry of raw.split(",")) {
+      expect(entry, entry).toMatch(/^[\w.-]+=\d+(\.\d+)?:\d+(\.\d+)?$/);
+    }
   });
 });
 
