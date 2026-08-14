@@ -1,3 +1,19 @@
 node_modules/
-dist/
+# The composite Action runs `node $GITHUB_ACTION_PATH/dist/action.js`, so a
+# consumer on `@v0` gets whatever is committed here — an ignored dist/ made
+# `uses: Unchained-Labs/preflight@v0` fail on the first step. The compiled JS is
+# committed for that reason and CI asserts it matches src/; type declarations and
+# source maps are not, since nothing consumes them from a tag.
+dist/**
+!dist/
+!dist/*.js
 *.tsbuildinfo
+
+# scratch output from running the CI assertions locally
+a.json
+b.json
+tiny.json
+usage.json
+cal.json
+plain.json
+tuned.json

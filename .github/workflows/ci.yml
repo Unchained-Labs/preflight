@@ -35,6 +35,82 @@ jobs:
 
       # A cost tool quoting stale prices is worse than one that admits it does
       # not know. Fail the build rather than let the table rot silently.
+      # dist/*.js is committed because the composite Action loads it from a tag.
+      # Committed build output rots silently, so this is the fence: rebuild and
+      # require the tree to be unchanged. A stale dist/ means everyone on `@v0` is
+      # running last month's cost model.
+      - name: the committed dist matches src
+        run: |
+          if ! git diff --exit-code -- 'dist/*.js'; then
+            echo "::error::dist/*.js is stale — run pnpm build and commit the result"
+            exit 1
+          fi
+          echo "ok  committed dist matches src"
+
+      - name: the Action entrypoint runs from a clean checkout
+        run: |
+          # What a consumer on `@v0` actually executes. If dist/action.js were
+          # missing or importing something uncommitted, this is where it fails.
+          test -f dist/action.js || { echo "::error::dist/action.js not committed"; exit 1; }
+          PREFLIGHT_PATHS='test/fixtures/*.graph.json' PREFLIGHT_COMMENT=false \
+            node dist/action.js
+          echo "ok  action entrypoint runs"
+
+      # Calibration is the one place preflight writes a number that looks
+      # measured. These assert that it stays honest about what it did and did not
+      # measure, and that it refuses rather than half-calibrating.
+      - name: calibrate refuses a sample too small to mean anything
+        run: |
+          printf '%s\n' '[{"prompt_tokens":1000,"completion_tokens":100},{"prompt_tokens":2000,"completion_tokens":200}]' > tiny.json
+          if node dist/cli.js calibrate tiny.json --out should-not-exist.json 2>/dev/null; then
+            echo "::error::calibrate accepted a 2-record sample"
+            exit 1
+          fi
+          if [ -f should-not-exist.json ]; then
+            echo "::error::calibrate wrote a config it said it was refusing to write"
+            exit 1
+          fi
+          echo "ok  calibrate refuses below the sample floor and writes nothing"
+
+      - name: calibrate writes the median and never invents a cache hit rate
+        run: |
+          node --input-type=module -e "
+            import { writeFileSync } from 'node:fs';
+            // Skewed on purpose: one 400k-context run among six small ones. A mean
+            // would land near 67k; the median must not move with it.
+            const rows = [[1000,100],[1100,110],[1200,120],[1300,130],[1400,140],[400000,200]]
+              .map(([p,c]) => ({ model: 'claude-opus-5', prompt_tokens: p, completion_tokens: c, total_tokens: p+c }));
+            writeFileSync('usage.json', JSON.stringify(rows));
+          "
+          node dist/cli.js calibrate usage.json --out cal.json 2>/dev/null
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            const c = JSON.parse(readFileSync('cal.json','utf8'));
+            const w = c.profiles.worker;
+            if (w.input > 100000) throw new Error('calibrated to the mean, not the median: ' + w.input);
+            if (w.cacheHitRate !== 0.7) throw new Error('cacheHitRate was not carried through: ' + w.cacheHitRate);
+            const prov = c.\$calibration.worker;
+            if (prov.samples !== 6) throw new Error('wrong sample count: ' + prov.samples);
+            if (!/not measured/.test(prov.cacheHitRate)) throw new Error('provenance does not admit the cache rate is unmeasured');
+            if (!prov.calibratedOn) throw new Error('no calibration date recorded');
+            if (prov.inputTokens.p90 !== 400000) throw new Error('the tail was not reported');
+            console.log('ok  calibrated input', w.input, '(median), p90', prov.inputTokens.p90, ', cacheHitRate untouched');
+          "
+
+      - name: a calibrated config actually changes the estimate
+        run: |
+          # If the emitted shape did not match what `estimate` reads, the whole
+          # command would be a no-op that looked like it worked.
+          node dist/cli.js estimate test/fixtures/audit.graph.json --format json > plain.json
+          node dist/cli.js estimate test/fixtures/audit.graph.json --format json --config cal.json > tuned.json
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            const a = JSON.parse(readFileSync('plain.json','utf8')).after;
+            const b = JSON.parse(readFileSync('tuned.json','utf8')).after;
+            if (a.tokens.input === b.tokens.input) throw new Error('calibration had no effect on the estimate');
+            console.log('ok  estimate honours the calibrated profile:', a.tokens.input, '->', b.tokens.input, 'input tokens');
+          "
+
       - name: the pricing table is not stale
         run: |
           node --input-type=module -e "

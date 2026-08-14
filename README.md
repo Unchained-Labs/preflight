@@ -104,6 +104,7 @@ npm i -g preflight-cost      # or npx preflight-cost
 preflight estimate <spec>              # agents, cost, biggest levers
 preflight diff <spec> --base origin/main
 preflight models                       # the table and when it was verified
+preflight calibrate <usage.json>       # replace a guessed profile with a measured one
 ```
 
 | Flag | Effect |
@@ -112,6 +113,9 @@ preflight models                       # the table and when it was verified
 | `--max-usd N` | Exit 1 if expected cost exceeds N. |
 | `--as-of YYYY-MM-DD` | Price as of a date — intro rates expire. |
 | `--config <file>` | Assumption overrides (default `preflight.json`). |
+| `--kind scope\|worker\|verifier\|synthesis` | Which profile `calibrate` writes (default `worker`). |
+| `--out <file>` | Where `calibrate` writes. Default is stdout. |
+| `--min-samples N` | Refuse to calibrate below this many records (default 5). |
 
 ### Two input shapes, honestly different accuracy
 
@@ -138,6 +142,51 @@ tight number, write the spec.
 
 Run one real workflow, read the actual token counts out of your spans, and put
 them here. The defaults are a starting point, not a measurement of your workload.
+
+#### Or let it read the spans for you
+
+Most orchestrators already record per-call token usage. `calibrate` takes those
+rows and writes the profile, so the step above stops being manual arithmetic. It
+reads a JSON array, a single object, or JSONL — which covers whichever of those
+your shell loop produced:
+
+```sh
+# Otter records this per job at GET /v1/jobs/{id}/usage
+for id in $(cat job-ids); do curl -s "$OTTER/v1/jobs/$id/usage"; done \
+  | jq -s . | preflight calibrate - --kind worker --out preflight.json
+```
+
+```
+  calibrating the worker profile from 23 measured call(s)
+
+             assumed   measured   change   p10–p90
+  input         8000 →    16024    ×2.00   9845–35458
+  output         800 →      567    ×0.71   382–969
+
+  cacheHitRate  0.7 (unchanged)
+                not measurable from usage rows — nothing in them reports cache reads
+```
+
+Three things it refuses to do, because a number that *looks* measured and is not
+is worse than an assumption that admits it:
+
+- **It does not invent a cache hit rate.** Usage rows do not report cache reads,
+  so there is nothing to derive one from. The existing value is carried through
+  and the report says so. This is the most tempting number to fabricate — it
+  moves the cost materially and nobody would check.
+- **It does not guess which node kind a job was.** A single-prompt job has no
+  `worker`/`verifier` distinction to read. You name the kind; the default is
+  `worker`, because a prompt in and a result out *is* the worker shape.
+- **It refuses below five samples.** Two runs produce a number with the authority
+  of a measurement and the accuracy of a guess. It exits 1 and writes nothing
+  rather than half-calibrating.
+
+It writes the **median**, not the mean: token distributions are right-skewed, and
+one run that filled a 400k context should not set your profile. The p10–p90 spread
+is reported separately, because the tail is what blows a budget. The write merges
+into an existing `preflight.json` rather than replacing it, and records a
+`$calibration` block with the sample size and date — a calibrated config with no
+date will be trusted long after it stopped being true.
 
 ## Action
 
@@ -177,15 +226,18 @@ cost bot nobody adopts.
 - **It does not check whether your graph is correct.** That is
   [graphlint](https://github.com/Unchained-Labs/graphlint).
 - **It does not track actual spend.** It prices the spec, not the run. Compare
-  its output against your real spans and feed the difference back into
-  `preflight.json`.
-- **Defaults are generic.** Uncalibrated, treat the shape (which stage dominates)
-  as more reliable than the absolute figure.
+  its output against your real spans and feed the difference back with
+  `preflight calibrate`.
+- **Defaults are generic until you calibrate.** Uncalibrated, treat the shape
+  (which stage dominates) as more reliable than the absolute figure.
+- **Calibration cannot recover a cache hit rate**, and on the workloads we have
+  measured that is the assumption the total is most sensitive to. It stays a
+  declared guess.
 
 ## Development
 
 ```sh
-pnpm install && pnpm build && pnpm test   # 47 tests
+pnpm install && pnpm build && pnpm test   # 77 tests
 node dist/cli.js estimate test/fixtures/audit.graph.json
 node dist/cli.js estimate test/fixtures/expensive.graph.json   # same graph, all deep
 ```

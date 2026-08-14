@@ -1,7 +1,10 @@
 #!/usr/bin/env node
-/** preflight CLI: estimate, diff, models. */
+/** preflight CLI: estimate, diff, models, calibrate. */
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+
+import { calibrate, DEFAULT_KIND, mergeConfig, parseUsage } from "./calibrate.js";
+import type { Calibration } from "./calibrate.js";
 
 import { diffEstimates, estimate } from "./estimate.js";
 import type { Assumptions, Estimate } from "./estimate.js";
@@ -17,12 +20,16 @@ USAGE
   preflight estimate <spec>              agents, cost and the biggest levers
   preflight diff <spec> --base <ref>     before/after against a git ref
   preflight models                       the pricing table and when it was verified\n  preflight models --format otter-env    emit OTTER_MODEL_PRICING for the Kymatics stack
+  preflight calibrate <usage.json>       replace a guessed token profile with a measured one
 
 OPTIONS
   --format text|json|markdown   output format (default: text)
   --max-usd N                   exit 1 if the expected cost exceeds N
   --as-of YYYY-MM-DD            price as of this date (intro rates expire)
   --config <file>               assumption overrides (default: preflight.json)
+  --kind scope|worker|verifier|synthesis   which profile calibrate writes (default: worker)
+  --out <file>                  where calibrate writes (default: stdout; use - for stdout)
+  --min-samples N               refuse to calibrate below this many records (default: 5)
   --no-color
   --version, --help
 
@@ -30,6 +37,17 @@ INPUT
   A declarative graph spec (*.graph.json) gives a tight estimate — width, tier
   and lens count are data. A script gives a wide range, because those are runtime
   values. The output marks which numbers were assumed.
+
+CALIBRATION
+  The token profiles are generic until you measure your own. Feed calibrate the
+  usage rows your orchestrator already records — for Otter, that is
+  GET /v1/jobs/{id}/usage — as a JSON array, a single object, or JSONL:
+
+    for id in $(cat job-ids); do curl -s "$OTTER/v1/jobs/$id/usage"; done \\
+      | jq -s . | preflight calibrate - --kind worker --out preflight.json
+
+  It writes the median, not the mean, because token distributions are skewed. It
+  does not invent a cache hit rate, because nothing in that data measures one.
 
 EXAMPLE
   preflight estimate audit.graph.json --max-usd 20
@@ -65,6 +83,137 @@ function atRef(ref: string, file: string, overrides: Partial<Assumptions>): Esti
   }
 }
 
+const KINDS = ["scope", "worker", "verifier", "synthesis"] as const;
+
+/** Render the calibration as a diff against what was being assumed. */
+function calibrationReport(cal: Calibration, source: string): string {
+  const pct = (before: number, after: number) =>
+    before === 0 ? "—" : `${after >= before ? "×" : "×"}${(after / before).toFixed(2)}`;
+  const row = (label: string, before: number, after: number, spread: string) =>
+    `  ${label.padEnd(9)} ${String(before).padStart(8)} → ${String(after).padStart(8)}  ` +
+    `${pct(before, after).padStart(7)}   ${spread}`;
+
+  const out = [
+    "",
+    `  calibrating the ${cal.kind} profile from ${cal.stats.n} measured call(s)`,
+    "",
+    `  ${"".padEnd(9)} ${"assumed".padStart(8)}   ${"measured".padStart(8)}  ${"change".padStart(7)}   p10–p90`,
+    row("input", cal.before.input, cal.after.input, `${cal.stats.input.p10}–${cal.stats.input.p90}`),
+    row("output", cal.before.output, cal.after.output, `${cal.stats.output.p10}–${cal.stats.output.p90}`),
+    "",
+  ];
+
+  if (cal.stats.input.mean > cal.stats.input.median * 1.5) {
+    out.push(
+      `  ! the input mean (${cal.stats.input.mean}) is well above the median — a few long runs are`,
+      "    pulling it up. The median is what got written; the p90 is the tail to budget for.",
+      "",
+    );
+  }
+
+  out.push(
+    `  cacheHitRate  ${cal.before.cacheHitRate} (unchanged)`,
+    "                not measurable from usage rows — nothing in them reports cache reads",
+    "",
+  );
+
+  if (cal.stats.byModel.length > 1) {
+    out.push("  models in the sample");
+    for (const m of cal.stats.byModel) out.push(`    ${String(m.n).padStart(5)}  ${m.model}`);
+    out.push("");
+  }
+
+  const { zero, malformed } = cal.stats.skipped;
+  if (zero || malformed) {
+    out.push(
+      `  skipped  ${zero} record(s) with no tokens, ${malformed} unreadable`,
+      "",
+    );
+  }
+
+  out.push(`  source  ${source}`, "");
+  return out.join("\n");
+}
+
+function runCalibrate(o: {
+  file: string | undefined;
+  kind: (typeof KINDS)[number];
+  out: string | undefined;
+  minSamples: number | undefined;
+  format: string;
+  configPath: string;
+  current: Partial<Assumptions>;
+}): number {
+  if (!KINDS.includes(o.kind)) {
+    console.error(`preflight: --kind must be one of ${KINDS.join(", ")}`);
+    return 2;
+  }
+  if (!o.file) {
+    console.error("usage: preflight calibrate <usage.json|->   (- reads stdin)");
+    return 2;
+  }
+
+  let text: string;
+  const source = o.file === "-" ? "stdin" : o.file;
+  try {
+    text = o.file === "-" ? readFileSync(0, "utf8") : readFileSync(o.file, "utf8");
+  } catch (e) {
+    console.error(`preflight: cannot read ${source}: ${(e as Error).message}`);
+    return 2;
+  }
+
+  const { records, malformed } = parseUsage(text);
+  if (!records.length) {
+    console.error(
+      `preflight: no usage records in ${source}. Expected objects with prompt_tokens and ` +
+        "completion_tokens — Otter's GET /v1/jobs/{id}/usage shape — as an array, a single " +
+        "object, or JSONL.",
+    );
+    return 2;
+  }
+
+  const cal = calibrate(records, {
+    kind: o.kind,
+    malformed,
+    minSamples: o.minSamples,
+    current: o.current,
+  });
+
+  if (o.format === "json") {
+    process.stdout.write(`${JSON.stringify(cal, null, 2)}\n`);
+    return cal.refusal ? 1 : 0;
+  }
+
+  process.stderr.write(calibrationReport(cal, source));
+
+  if (cal.refusal) {
+    // Exit non-zero and write nothing. Half-calibrating is the failure mode:
+    // the config would carry a `$calibration` block asserting a measurement that
+    // the sample does not support.
+    console.error(`  refusing to write: ${cal.refusal}\n`);
+    return 1;
+  }
+
+  const existing =
+    o.out && o.out !== "-" && existsSync(o.out)
+      ? (JSON.parse(readFileSync(o.out, "utf8")) as Record<string, unknown>)
+      : (o.current as Record<string, unknown>);
+  // The run date is the calibration date; it is provenance, not a computed value.
+  const merged = mergeConfig(existing, cal, {
+    source,
+    date: new Date().toISOString().slice(0, 10),
+  });
+  const json = `${JSON.stringify(merged, null, 2)}\n`;
+
+  if (!o.out || o.out === "-") {
+    process.stdout.write(json);
+    return 0;
+  }
+  writeFileSync(o.out, json);
+  console.error(`  wrote ${o.out}\n`);
+  return 0;
+}
+
 function main(): number {
   const argv = process.argv.slice(2);
   if (!argv.length || argv.includes("--help") || argv.includes("-h")) {
@@ -82,11 +231,33 @@ function main(): number {
     return i === -1 ? undefined : argv[i + 1];
   };
   const cmd = argv[0];
-  const positional = argv.slice(1).filter((a) => !a.startsWith("-"));
+  // A bare `-` means stdin, so it is a positional and not a flag. And a flag's
+  // value must not also count as one: `calibrate - --kind verifier` has exactly
+  // one positional, and reading `verifier` as a filename is how you get
+  // "cannot read verifier".
+  const VALUE_FLAGS = new Set([
+    "--format", "--max-usd", "--as-of", "--config", "--base", "--kind", "--out", "--min-samples",
+  ]);
+  const rest = argv.slice(1);
+  const positional = rest.filter(
+    (a, i) => (a === "-" || !a.startsWith("-")) && !(i > 0 && VALUE_FLAGS.has(rest[i - 1]!)),
+  );
   const format = flag("--format") ?? "text";
   const overrides = loadAssumptions(flag("--config"));
   const asOf = flag("--as-of");
   if (asOf) overrides.asOf = asOf;
+
+  if (cmd === "calibrate") {
+    return runCalibrate({
+      file: positional[0],
+      kind: (flag("--kind") ?? DEFAULT_KIND) as never,
+      out: flag("--out"),
+      minSamples: flag("--min-samples") ? Number(flag("--min-samples")) : undefined,
+      format,
+      configPath: flag("--config") ?? "preflight.json",
+      current: overrides,
+    });
+  }
 
   if (cmd === "models") {
     // Machine-readable export for Otter's OTTER_MODEL_PRICING, so the two

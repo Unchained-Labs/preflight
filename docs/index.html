@@ -25,6 +25,7 @@
     <nav>
       <a href="#model">The model</a>
       <a href="#action">Action</a>
+      <a href="#calibration">Calibration</a>
       <a href="#trust">Trust</a>
       <a href="https://github.com/Unchained-Labs/preflight">GitHub</a>
     </nav>
@@ -40,7 +41,7 @@
     <p class="lead">Runtime guards stop a run that is already spending. Nothing tells you what a workflow will cost before you merge the change that made it expensive — which is when it is cheap to fix.</p>
     <ul class="badges">
       <li class="badge warn">alpha</li>
-      <li class="badge up">47 tests passing</li>
+      <li class="badge up">77 tests passing</li>
       <li class="badge ">GitHub Action</li>
       <li class="badge ">MIT</li>
     </ul>
@@ -141,6 +142,46 @@ jobs:
           max-usd: &quot;25&quot;</code></pre>
     <p class="narrow">It posts one comment and updates it in place on later pushes rather than adding a new one each time, and outputs <code>usd</code> and <code>agents</code> for downstream steps.</p>
     <p class="narrow">The action is <strong>dependency-free</strong> — no <code>@actions/core</code>, no <code>@actions/github</code>. A cost bot that needs a 40MB install to post one comment is a cost bot nobody adopts.</p>
+  </div>
+</section>
+
+<section id="calibration">
+  <div class="wrap">
+    <p class="label">Calibration</p>
+    <h2>The defaults are a guess. Replace them with your own numbers.</h2>
+    <p class="narrow">This tool&#x27;s honest weakness has always been that its token profiles are generic — 8k in and 800 out per fan-out call is a plausible shape, not a measurement of <em>your</em> workload. The README has said so since the first commit, along with the fix: run one real workflow, read the counts out of your spans, write them into <code>preflight.json</code>.</p>
+    <p class="narrow"><code>preflight calibrate</code> is that step, automated. Most orchestrators already record per-call token usage; feed it those rows and it writes the profile. It reads a JSON array, a single object, or JSONL, because which of those you end up with depends on whether you remembered <code>jq -s</code>.</p>
+    <pre><code># Otter records this per job at GET /v1/jobs/{id}/usage
+for id in $(cat job-ids); do curl -s &quot;$OTTER/v1/jobs/$id/usage&quot;; done \
+  | jq -s . | preflight calibrate - --kind worker --out preflight.json</code></pre>
+    <pre class="term"><code>  calibrating the worker profile from 23 measured call(s)
+
+             assumed   measured   change   p10–p90
+  input         8000 →    16024    <span class="wa">×2.00</span>   9845–35458
+  output         800 →      567    <span class="ok">×0.71</span>   382–969
+
+  cacheHitRate  0.7 (unchanged)
+                <span class="dim">not measurable from usage rows — nothing in them reports cache reads</span></code></pre>
+    <h3>What it refuses to do</h3>
+    <p class="narrow">A number that <em>looks</em> measured and is not is worse than an assumption that admits it, so three refusals are built in.</p>
+    <div class="grid three">
+      <div class="card">
+        <h3>No invented cache rate</h3>
+        <p>Usage rows do not report cache reads, so there is nothing to derive one from. The existing value is carried through and the report says so. This is the most tempting number to fabricate — it moves the total materially and nobody would check it.</p>
+      </div>
+      <div class="card">
+        <h3>No guessed node kind</h3>
+        <p>A single-prompt job has no <code>worker</code>/<code>verifier</code> distinction to read. You name the kind. The default is <code>worker</code>, because a prompt in and a result out <em>is</em> the worker shape — stated, not inferred.</p>
+      </div>
+      <div class="card">
+        <h3>No calibrating from five runs</h3>
+        <p>Below five samples it exits 1 and writes nothing. Two runs produce a number with the authority of a measurement and the accuracy of a guess, and half-calibrating is worse than not starting.</p>
+      </div>
+    </div>
+    <div class="note">
+      <p><strong>It writes the median, not the mean.</strong> Token distributions are right-skewed, and one run that filled a 400k context should not set your profile. The p10–p90 spread is reported separately, because the tail is what blows a budget.</p>
+      <p><strong>And it merges rather than replaces.</strong> A real <code>preflight.json</code> also carries pricing overrides and fan-out assumptions; overwriting them would be a silent regression in someone&#x27;s cost model. The write adds a <code>$calibration</code> block with the sample size, the models in it, and the date — a calibrated config with no date will be trusted long after it stopped being true.</p>
+    </div>
   </div>
 </section>
 
