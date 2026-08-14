@@ -50,4 +50,4 @@ runs:
         PREFLIGHT_COMMENT: ${{ inputs.comment }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
         PREFLIGHT_BASE: ${{ github.event.pull_request.base.sha }}
-      run: node ${{ github.action_path }}/dist/action.js
+      run: node ${{ github.action_path }}/dist/action.bundle.js

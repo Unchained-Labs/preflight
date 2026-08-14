@@ -47,14 +47,27 @@ jobs:
           fi
           echo "ok  committed dist matches src"
 
-      - name: the Action entrypoint runs from a clean checkout
+      - name: the Action entrypoint runs with no node_modules, like a consumer's
         run: |
-          # What a consumer on `@v0` actually executes. If dist/action.js were
-          # missing or importing something uncommitted, this is where it fails.
-          test -f dist/action.js || { echo "::error::dist/action.js not committed"; exit 1; }
-          PREFLIGHT_PATHS='test/fixtures/*.graph.json' PREFLIGHT_COMMENT=false \
-            node dist/action.js
-          echo "ok  action entrypoint runs"
+          # A consumer on `@v0` gets a bare git checkout of the tag: committed
+          # files, no install. Running the entrypoint *here* would pass on this
+          # repo's node_modules and hide exactly the bug this step exists for —
+          # dist/spec.js imports acorn, so the unbundled entrypoint died with
+          # ERR_MODULE_NOT_FOUND for anyone who ever used the documented snippet.
+          # So copy it somewhere with no node_modules and run it there.
+          test -f dist/action.bundle.js || { echo "::error::dist/action.bundle.js not committed"; exit 1; }
+          T=$(mktemp -d)
+          mkdir -p "$T/test/fixtures"
+          cp dist/action.bundle.js "$T/"
+          cp test/fixtures/audit.graph.json "$T/test/fixtures/"
+          git -C "$T" init -q .
+          git -C "$T" -c user.email=ci@example.com -c user.name=ci add -A
+          git -C "$T" -c user.email=ci@example.com -c user.name=ci commit -q -m fixture
+          out=$(cd "$T" && PREFLIGHT_PATHS='test/fixtures/*.graph.json' PREFLIGHT_COMMENT=false node action.bundle.js)
+          echo "$out" | grep -q '^usd=0\.97' || {
+            echo "::error::standalone entrypoint did not price the fixture"; echo "$out"; exit 1;
+          }
+          echo "ok  action entrypoint runs standalone: $(echo "$out" | head -2 | tr '\n' ' ')"
 
       # Calibration is the one place preflight writes a number that looks
       # measured. These assert that it stays honest about what it did and did not
