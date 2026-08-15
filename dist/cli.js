@@ -16,6 +16,9 @@ USAGE
   preflight models                       the pricing table and when it was verified\n  preflight models --format otter-env    emit OTTER_MODEL_PRICING for the Kymatics stack
   preflight calibrate <usage.json>       replace a guessed token profile with a measured one
 
+  A spec path of - reads one graph from stdin:
+    localflow graph <session> | preflight estimate -
+
 OPTIONS
   --format text|json|markdown   output format (default: text)
   --max-usd N                   exit 1 if the expected cost exceeds N
@@ -232,13 +235,19 @@ function main() {
         console.error(`usage: preflight ${cmd} <spec>`);
         return 2;
     }
-    if (!existsSync(file)) {
+    // `-` reads one spec from stdin. Graphs are increasingly generated rather than
+    // written — localflow reconstructs the one a session actually ran — and making
+    // the caller land it in a temp file first is friction for no reason.
+    const fromStdin = file === "-";
+    if (!fromStdin && !existsSync(file)) {
         console.error(`preflight: no such file: ${file}`);
         return 2;
     }
     let after;
     try {
-        after = estimateFile(file, overrides);
+        after = fromStdin
+            ? estimate(read("<stdin>.graph.json", readFileSync(0, "utf8")), overrides)
+            : estimateFile(file, overrides);
     }
     catch (e) {
         console.error(`preflight: ${e.message}`);
