@@ -112,6 +112,7 @@ preflight calibrate <usage.json>       # replace a guessed profile with a measur
 | `--format text\|json\|markdown` | `markdown` is the PR comment body. |
 | `--max-usd N` | Exit 1 if expected cost exceeds N. |
 | `--as-of YYYY-MM-DD` | Price as of a date — intro rates expire. |
+| `"cacheTtl": "5m"\|"1h"` | In `preflight.json`. Decides what a cache write costs. |
 | `--config <file>` | Assumption overrides (default `preflight.json`). |
 | `--kind scope\|worker\|verifier\|synthesis` | Which profile `calibrate` writes (default `worker`). |
 | `--out <file>` | Where `calibrate` writes. Default is stdout. |
@@ -136,9 +137,34 @@ tight number, write the spec.
     "verifier": { "input": 2500,  "output": 300, "cacheHitRate": 0.9 }
   },
   "findingsPerWorker": { "low": 0.1, "expected": 0.4, "high": 1.0 },
-  "schemaRetryRate": 0.02
+  "schemaRetryRate": 0.02,
+  "cacheTtl": "1h"
 }
 ```
+
+#### Cache writes are billed by how long they live
+
+`cacheTtl` decides what writing the shared prefix costs: **1.25× the input rate
+for the API's five-minute default, 2× for the one-hour tier.** On a workload that
+is mostly cached the difference is about a third of the bill, so this is not a
+detail to leave at whatever the default happens to be.
+
+preflight shipped a single 1.25× multiplier until
+[localflow](https://github.com/Unchained-Labs/localflow) checked it against an
+oracle — `claude -p --output-format json` reports `total_cost_usd` for the run it
+just did:
+
+```
+  531 input + 22188 cache-read + 3026 cache-write(1h) + 51 output, haiku
+  1.25x -> $0.0067873000
+  2.00x -> $0.0090568000
+  CLI   -> $0.0090568000
+```
+
+Claude Code writes one-hour entries, so `"cacheTtl": "1h"` is the right setting
+for a graph running on it. The default stays `"5m"` because that is the API
+default. A `preflight.json` that still sets the old `cacheWriteMultiplier` is
+honoured as-is rather than silently repriced.
 
 Run one real workflow, read the actual token counts out of your spans, and put
 them here. The defaults are a starting point, not a measurement of your workload.
@@ -174,6 +200,10 @@ is worse than an assumption that admits it:
   so there is nothing to derive one from. The existing value is carried through
   and the report says so. This is the most tempting number to fabricate — it
   moves the cost materially and nobody would check.
+  **Where the rows do report it, measure it:**
+  [localflow](https://github.com/Unchained-Labs/localflow) reads Claude Code
+  transcripts, which carry `cache_read_input_tokens`, and writes the measured
+  rate into a `preflight.json` this reads — `localflow calibrate > preflight.json`.
 - **It does not guess which node kind a job was.** A single-prompt job has no
   `worker`/`verifier` distinction to read. You name the kind; the default is
   `worker`, because a prompt in and a result out *is* the worker shape.
@@ -230,14 +260,16 @@ cost bot nobody adopts.
   `preflight calibrate`.
 - **Defaults are generic until you calibrate.** Uncalibrated, treat the shape
   (which stage dominates) as more reliable than the absolute figure.
-- **Calibration cannot recover a cache hit rate**, and on the workloads we have
-  measured that is the assumption the total is most sensitive to. It stays a
-  declared guess.
+- **Calibration cannot recover a cache hit rate from *usage rows*** — they do not
+  carry one. It can be measured from a source that does:
+  [localflow](https://github.com/Unchained-Labs/localflow) reads it out of Claude
+  Code transcripts. Where neither is available it stays a declared guess, and it
+  is the assumption the total is most sensitive to.
 
 ## Development
 
 ```sh
-pnpm install && pnpm build && pnpm test   # 77 tests
+pnpm install && pnpm build && pnpm test   # 82 tests
 node dist/cli.js estimate test/fixtures/audit.graph.json
 node dist/cli.js estimate test/fixtures/expensive.graph.json   # same graph, all deep
 ```

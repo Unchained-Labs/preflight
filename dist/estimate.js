@@ -36,8 +36,21 @@ export const DEFAULT_ASSUMPTIONS = {
     unknownRounds: { low: 1, expected: 3, high: 8 },
     schemaRetryRate: 0.05,
     cacheReadMultiplier: 0.1,
-    cacheWriteMultiplier: 1.25,
+    // Five minutes is the API default, so it is the default here. A graph built on
+    // Claude Code or the extended-TTL beta should say `"cacheTtl": "1h"`.
+    cacheTtl: "5m",
+    cacheWrite5mMultiplier: 1.25,
+    // Verified against a real run: `claude -p --output-format json` reports
+    // total_cost_usd, and 2.0 reproduces it to ten decimal places where 1.25 comes
+    // out about a third light. See localflow, which found this.
+    cacheWrite1hMultiplier: 2.0,
 };
+/** The write multiplier in force, honouring a legacy single-value override. */
+export function cacheWriteMultiplierFor(a) {
+    if (typeof a.cacheWriteMultiplier === "number")
+        return a.cacheWriteMultiplier;
+    return a.cacheTtl === "1h" ? a.cacheWrite1hMultiplier : a.cacheWrite5mMultiplier;
+}
 /** Classify a node so the right token profile applies. */
 export function classify(node) {
     if (node.isVerifier || node.lenses.length > 0)
@@ -66,7 +79,7 @@ function usdFor(calls, profile, price, a) {
     // fresh input on every call
     (calls * freshPortion * price.input) / 1e6 +
         // the shared prefix, written once at a premium
-        (writeCalls * cachedPortion * price.input * a.cacheWriteMultiplier) / 1e6 +
+        (writeCalls * cachedPortion * price.input * cacheWriteMultiplierFor(a)) / 1e6 +
         // and read cheaply thereafter
         (readCalls * cachedPortion * price.input * a.cacheReadMultiplier) / 1e6;
     const outputUsd = (calls * profile.output * price.output) / 1e6;

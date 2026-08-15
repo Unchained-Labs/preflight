@@ -1,4 +1,5 @@
 /** Renderers: a terminal report, and the markdown that goes on the PR. */
+import { cacheWriteMultiplierFor } from "./estimate.js";
 import type { Estimate, EstimateDiff } from "./estimate.js";
 
 const colour = process.env.NO_COLOR === undefined && Boolean(process.stdout.isTTY);
@@ -216,7 +217,9 @@ export function markdown(d: EstimateDiff, opts: { file: string; sha?: string } =
     `**Assumptions:** ${e.assumptions.profiles.worker.input / 1000}k in / ${e.assumptions.profiles.worker.output} out per fan-out call, ` +
       `${e.assumptions.profiles.verifier.input / 1000}k in / ${e.assumptions.profiles.verifier.output} out per verifier lens, ` +
       `${e.assumptions.findingsPerWorker.expected} findings per unit, ${Math.round(e.assumptions.schemaRetryRate * 100)}% schema retries, ` +
-      `prompt cache reads at ${e.assumptions.cacheReadMultiplier}×. Override in \`preflight.json\`.`,
+      `prompt cache reads at ${e.assumptions.cacheReadMultiplier}×, ` +
+      `${e.assumptions.cacheTtl} cache writes at ${cacheWriteMultiplierFor(e.assumptions)}×. ` +
+      "Override in \`preflight.json\`.",
   );
   lines.push("");
   if (e.warnings.length) {

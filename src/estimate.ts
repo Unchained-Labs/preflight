@@ -52,9 +52,27 @@ export interface Assumptions {
   unknownRounds: { low: number; expected: number; high: number };
   /** Share of calls that fail schema validation and are retried. */
   schemaRetryRate: number;
-  /** Cache read price multiplier. Cache writes cost more; see `cacheWriteMultiplier`. */
+  /** Cache read price multiplier. Cache writes cost more; see the two below. */
   cacheReadMultiplier: number;
-  cacheWriteMultiplier: number;
+  /**
+   * How long the cache entries live, which decides what writing them costs.
+   *
+   * The API's default is five minutes. Claude Code — and anything asking for the
+   * extended TTL — writes one-hour entries, and those bill at twice the input
+   * rate rather than 1.25x. On a workload that is mostly cached that is not a
+   * rounding error: it is about a third of the bill.
+   *
+   * `localflow calibrate` measures which one your runs actually used.
+   */
+  cacheTtl: "5m" | "1h";
+  cacheWrite5mMultiplier: number;
+  cacheWrite1hMultiplier: number;
+  /**
+   * Deprecated. A single write multiplier could only ever be right for one TTL.
+   * Still honoured when a `preflight.json` sets it, so an existing config does
+   * not silently change price, but it overrides both tiers when present.
+   */
+  cacheWriteMultiplier?: number;
   /** Date the run will happen — decides whether intro pricing still applies. */
   asOf: string;
 }
@@ -66,8 +84,21 @@ export const DEFAULT_ASSUMPTIONS: Omit<Assumptions, "asOf"> = {
   unknownRounds: { low: 1, expected: 3, high: 8 },
   schemaRetryRate: 0.05,
   cacheReadMultiplier: 0.1,
-  cacheWriteMultiplier: 1.25,
+  // Five minutes is the API default, so it is the default here. A graph built on
+  // Claude Code or the extended-TTL beta should say `"cacheTtl": "1h"`.
+  cacheTtl: "5m",
+  cacheWrite5mMultiplier: 1.25,
+  // Verified against a real run: `claude -p --output-format json` reports
+  // total_cost_usd, and 2.0 reproduces it to ten decimal places where 1.25 comes
+  // out about a third light. See localflow, which found this.
+  cacheWrite1hMultiplier: 2.0,
 };
+
+/** The write multiplier in force, honouring a legacy single-value override. */
+export function cacheWriteMultiplierFor(a: Assumptions): number {
+  if (typeof a.cacheWriteMultiplier === "number") return a.cacheWriteMultiplier;
+  return a.cacheTtl === "1h" ? a.cacheWrite1hMultiplier : a.cacheWrite5mMultiplier;
+}
 
 export interface NodeEstimate {
   id: string;
@@ -133,7 +164,7 @@ function usdFor(
     // fresh input on every call
     (calls * freshPortion * price.input) / 1e6 +
     // the shared prefix, written once at a premium
-    (writeCalls * cachedPortion * price.input * a.cacheWriteMultiplier) / 1e6 +
+    (writeCalls * cachedPortion * price.input * cacheWriteMultiplierFor(a)) / 1e6 +
     // and read cheaply thereafter
     (readCalls * cachedPortion * price.input * a.cacheReadMultiplier) / 1e6;
 

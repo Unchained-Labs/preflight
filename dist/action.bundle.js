@@ -74,8 +74,19 @@ var DEFAULT_ASSUMPTIONS = {
   unknownRounds: { low: 1, expected: 3, high: 8 },
   schemaRetryRate: 0.05,
   cacheReadMultiplier: 0.1,
-  cacheWriteMultiplier: 1.25
+  // Five minutes is the API default, so it is the default here. A graph built on
+  // Claude Code or the extended-TTL beta should say `"cacheTtl": "1h"`.
+  cacheTtl: "5m",
+  cacheWrite5mMultiplier: 1.25,
+  // Verified against a real run: `claude -p --output-format json` reports
+  // total_cost_usd, and 2.0 reproduces it to ten decimal places where 1.25 comes
+  // out about a third light. See localflow, which found this.
+  cacheWrite1hMultiplier: 2
 };
+function cacheWriteMultiplierFor(a) {
+  if (typeof a.cacheWriteMultiplier === "number") return a.cacheWriteMultiplier;
+  return a.cacheTtl === "1h" ? a.cacheWrite1hMultiplier : a.cacheWrite5mMultiplier;
+}
 function classify(node) {
   if (node.isVerifier || node.lenses.length > 0) return "verifier";
   const id = node.id.toLowerCase();
@@ -94,7 +105,7 @@ function usdFor(calls, profile, price, a) {
   const inputUsd = (
     // fresh input on every call
     calls * freshPortion * price.input / 1e6 + // the shared prefix, written once at a premium
-    writeCalls * cachedPortion * price.input * a.cacheWriteMultiplier / 1e6 + // and read cheaply thereafter
+    writeCalls * cachedPortion * price.input * cacheWriteMultiplierFor(a) / 1e6 + // and read cheaply thereafter
     readCalls * cachedPortion * price.input * a.cacheReadMultiplier / 1e6
   );
   const outputUsd = calls * profile.output * price.output / 1e6;
@@ -381,7 +392,7 @@ function markdown(d, opts = { file: "" }) {
   lines.push("`~` = width or count assumed rather than read from the spec.");
   lines.push("");
   lines.push(
-    `**Assumptions:** ${e.assumptions.profiles.worker.input / 1e3}k in / ${e.assumptions.profiles.worker.output} out per fan-out call, ${e.assumptions.profiles.verifier.input / 1e3}k in / ${e.assumptions.profiles.verifier.output} out per verifier lens, ${e.assumptions.findingsPerWorker.expected} findings per unit, ${Math.round(e.assumptions.schemaRetryRate * 100)}% schema retries, prompt cache reads at ${e.assumptions.cacheReadMultiplier}\xD7. Override in \`preflight.json\`.`
+    `**Assumptions:** ${e.assumptions.profiles.worker.input / 1e3}k in / ${e.assumptions.profiles.worker.output} out per fan-out call, ${e.assumptions.profiles.verifier.input / 1e3}k in / ${e.assumptions.profiles.verifier.output} out per verifier lens, ${e.assumptions.findingsPerWorker.expected} findings per unit, ${Math.round(e.assumptions.schemaRetryRate * 100)}% schema retries, prompt cache reads at ${e.assumptions.cacheReadMultiplier}\xD7, ${e.assumptions.cacheTtl} cache writes at ${cacheWriteMultiplierFor(e.assumptions)}\xD7. Override in \`preflight.json\`.`
   );
   lines.push("");
   if (e.warnings.length) {

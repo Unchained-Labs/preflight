@@ -25,6 +25,7 @@
     <nav>
       <a href="#model">The model</a>
       <a href="#action">Action</a>
+      <a href="#cachettl">Cache</a>
       <a href="#calibration">Calibration</a>
       <a href="#trust">Trust</a>
       <a href="https://github.com/Unchained-Labs/preflight">GitHub</a>
@@ -41,7 +42,7 @@
     <p class="lead">Runtime guards stop a run that is already spending. Nothing tells you what a workflow will cost before you merge the change that made it expensive — which is when it is cheap to fix.</p>
     <ul class="badges">
       <li class="badge warn">alpha</li>
-      <li class="badge up">77 tests passing</li>
+      <li class="badge up">82 tests passing</li>
       <li class="badge ">GitHub Action</li>
       <li class="badge ">MIT</li>
     </ul>
@@ -145,6 +146,24 @@ jobs:
   </div>
 </section>
 
+<section id="cachettl">
+  <div class="wrap">
+    <p class="label">Cache</p>
+    <h2>A cache write is billed by how long it lives</h2>
+    <p class="narrow">Writing the shared prefix costs <strong>1.25x the input rate for the API&#x27;s five-minute default and 2x for the one-hour tier</strong>. On a workload that is mostly cached that difference is about a third of the bill, which is too much to leave at whatever the default happens to be.</p>
+    <p class="narrow">preflight shipped a single 1.25x multiplier until <a href="https://unchained-labs.github.io/localflow/">localflow</a> checked it against an oracle. <code>claude -p --output-format json</code> reports <code>total_cost_usd</code> for the run it just did, so the arithmetic either lands on it or it does not:</p>
+    <pre class="term"><code>  531 input + 22188 cache-read + 3026 cache-write(1h) + 51 output, haiku
+
+  1.25x -&gt; <span class="er">$0.0067873000</span>
+  2.00x -&gt; <span class="ok">$0.0090568000</span>
+  CLI   -&gt; <span class="ok">$0.0090568000</span></code></pre>
+    <p class="narrow">Set <code>&quot;cacheTtl&quot;: &quot;1h&quot;</code> in <code>preflight.json</code> for a graph running on Claude Code or the extended-TTL beta. The default stays <code>&quot;5m&quot;</code>, because that is the API default and guessing the more expensive tier would over-report every ordinary run.</p>
+    <div class="note">
+      <p><strong>An existing config is not silently repriced.</strong> A <code>preflight.json</code> that still sets the old single <code>cacheWriteMultiplier</code> is honoured exactly as written. A number somebody deliberately pinned should not move because the tool learned something.</p>
+    </div>
+  </div>
+</section>
+
 <section id="calibration">
   <div class="wrap">
     <p class="label">Calibration</p>
@@ -167,7 +186,7 @@ for id in $(cat job-ids); do curl -s &quot;$OTTER/v1/jobs/$id/usage&quot;; done 
     <div class="grid three">
       <div class="card">
         <h3>No invented cache rate</h3>
-        <p>Usage rows do not report cache reads, so there is nothing to derive one from. The existing value is carried through and the report says so. This is the most tempting number to fabricate — it moves the total materially and nobody would check it.</p>
+        <p>Usage rows do not report cache reads, so there is nothing to derive one from. The existing value is carried through and the report says so — it is the most tempting number to fabricate, since it moves the total materially and nobody would check. Where a source <em>does</em> report it, measure it: <a href="https://unchained-labs.github.io/localflow/">localflow</a> reads it out of Claude Code transcripts and writes it here.</p>
       </div>
       <div class="card">
         <h3>No guessed node kind</h3>
