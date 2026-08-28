@@ -1,6 +1,6 @@
 {
   "name": "preflight-cost",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Prices an agent workflow before it runs, and comments the predicted agent count and dollar cost on the pull request that changed it.",
   "keywords": [
     "agent",
